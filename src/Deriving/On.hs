@@ -9,12 +9,11 @@
 
 module Deriving.On (On(..)) where
 
-import Data.Function (on)
-import Data.Hashable (Hashable(..))
-import Data.Kind     (Type)
-import Data.Ord      (comparing)
-import GHC.Records   (HasField(..))
-import GHC.TypeLits  (Symbol)
+import Data.Function     (on)
+import Data.Hashable     (Hashable(..))
+import Data.Kind         (Type)
+import Data.Ord          (comparing)
+import Deriving.On.Class (OnTarget (..))
 
 -- | With 'DerivingVia': to derive non-structural instances. Specifies
 -- what field to base instances on.
@@ -54,14 +53,15 @@ import GHC.TypeLits  (Symbol)
 type    On :: forall k. Type -> k -> Type
 newtype a `On` field = On a
 
-instance (HasField field a b, Eq b) => Eq (On @Symbol a field) where
+instance (OnTarget k target a b, Eq b) => Eq (On @k a target) where
   (==) :: a `On` field -> a `On` field -> Bool
-  On a1 == On a2 = ((==) `on` getField @field) a1 a2
+  On a1 == On a2 = ((==) `on` getTarget @k @target) a1 a2
 
-instance (HasField field a b, Ord b) => Ord (On @Symbol a field) where
-  compare :: a `On` field -> a `On` field -> Ordering
-  On a1 `compare` On a2 = comparing (getField @field) a1 a2
 
-instance (HasField field a b, Hashable b) => Hashable (On @Symbol a field) where
-  hashWithSalt :: Int -> a `On` field -> Int
-  hashWithSalt salt (On a) = hashWithSalt salt (getField @field a)
+instance (OnTarget k target a b, Ord b) => Ord (On @k a target) where
+  compare :: a `On` target -> a `On` target -> Ordering
+  On a1 `compare` On a2 = comparing (getTarget @k @target) a1 a2
+
+instance (OnTarget k target a b, Hashable b) => Hashable (On @k a target) where
+  hashWithSalt :: Int -> a `On` target -> Int
+  hashWithSalt salt (On a) = hashWithSalt salt (getTarget @k @target a)

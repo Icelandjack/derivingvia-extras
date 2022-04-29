@@ -1,58 +1,84 @@
-{-# LANGUAGE AllowAmbiguousTypes      #-}
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE EmptyDataDecls           #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE FunctionalDependencies   #-}
-{-# LANGUAGE InstanceSigs             #-}
-{-# LANGUAGE KindSignatures           #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE PolyKinds                #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE TypeOperators            #-}
-{-# LANGUAGE TypeSynonymInstances     #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Deriving.On.Nth where
 
-import Data.Function (on)
-import Data.Hashable (Hashable (..))
-import Data.Kind     (Constraint, Type)
-import Data.Ord      (comparing)
-import Deriving.On   (On (..))
+import Data.Kind (Constraint, Type)
+import Deriving.On.Class (OnTarget (..))
 import qualified GHC.Generics as G
-import GHC.TypeLits  (CmpNat, ErrorMessage (..), KnownNat, Nat, TypeError, type (+), type (-), type (<=?))
+import GHC.TypeLits (ErrorMessage (..), KnownNat, Nat, TypeError, type (+), type (-), type (<=?))
 
 -- | With 'DerivingVia': to derive non-structural instances with @'On'.
 -- @'Nth' specifies what field to base instances on based on its position in
 -- a product type.
 --
 -- Does not support types with multiple constructors.
+--
+-- The type @'On' User (Nth 2)@ is compared and evaluated based only
+-- on the third record field, the @"userID"@. This uses GHC Generics to project
+-- the relevant component.
+--
+-- @
+-- {-# Language DataKinds     #-}
+-- {-# LANGUAGE DeriveGeneric #-}
+-- {-# Language DerivingVia   #-}
+-- {-# Language TypeOperators #-}
+--
+-- import Deriving.On
+-- import Deriving.On.Nth
+-- import Data.Hashable
+-- import GHC.Generics (Generic)
+--
+-- data User = User
+--   { name   :: String
+--   , age    :: Int
+--   , userID :: Integer
+--   }
+--   deriving Generic
+--   deriving (Eq, Ord, Hashable)
+--   via User `On` Nth 2
+-- @
+--
+-- @
+-- >> alice = User "Alice" 50 0xDEADBEAF
+-- >> bob   = User "Bob"   20 0xDEADBEAF
+-- >>
+-- >> alice == bob
+-- True
+-- >> alice <= bob
+-- True
+-- >> hash alice == hash bob
+-- True
+-- @
 type Nth :: Nat -> Type
 data Nth n
 
-instance (HasNth n a b, Eq b) => Eq (a `On` Nth n) where
-  (==) :: a `On` Nth n -> a `On` Nth n -> Bool
-  On a1 == On a2 = ((==) `on` getNth @n) a1 a2
-
-instance (HasNth n a b, Ord b) => Ord (a `On` Nth n) where
-  compare :: a `On` field -> a `On` field -> Ordering
-  On a1 `compare` On a2 = comparing (getNth @n) a1 a2
-
-instance (HasNth n a b, Hashable b) => Hashable (a `On` Nth n) where
-  hashWithSalt :: Int -> a `On` field -> Int
-  hashWithSalt salt (On a) = hashWithSalt salt (getNth @n a)
-
--- High-level constraint synonym + helper
-
-type HasNth n a v = (G.Generic a, GHasNth n (G.Rep a) a, v ~ Value n (G.Rep a))
-
-getNth :: forall n a v. HasNth n a v => a -> v
-getNth = gGetNth @n @_ @a . G.from
+instance
+  ( G.Generic a,
+    GHasNth n (G.Rep a) a,
+    v ~ Value n (G.Rep a)
+  ) =>
+  OnTarget Type (Nth n) a v
+  where
+  getTarget = gGetNth @n @_ @a . G.from
 
 -- Generically get a value from a product type
 
@@ -76,16 +102,13 @@ instance
 
 instance
   ( KnownNat n,
-    CmpNat n (SelectorSize selectors) ~ 'LT,
-    If @Constraint
-      (SelectorSize selectors <=? n)
-      ( TypeError
-          ( 'Text "Specified index Nth " ':<>: 'ShowType n ':<>: 'Text " is too large for type"
-              ':$$: 'ShowType original
-              ':$$: 'ShowType (SelectorSize selectors)
-          )
-      )
-      (),
+    countFields ~ SelectorSize selectors,
+    FailIf
+      (countFields <=? n)
+      ( 'Text "Specified index Nth " ':<>: 'ShowType n ':<>: 'Text " is too large for type"
+          ':$$: 'ShowType original
+          ':$$: 'Text "because it only has " ':<>: 'ShowType countFields ':<>: 'Text " fields."
+      ),
     (GHasNth n selectors original)
   ) =>
   GHasNth n (G.C1 meta selectors) original
@@ -94,7 +117,7 @@ instance
   gGetNth (G.M1 c) = gGetNth @n @_ @original c
 
 instance
-  (n ~ 0) =>
+  (KnownNat n) =>
   GHasNth n (G.S1 meta (G.K1 metaK v)) original
   where
   type Value n (G.S1 meta (G.K1 metaK v)) = v
@@ -135,7 +158,7 @@ type family SelectorSize t :: Nat where
   SelectorSize (G.S1 _ _) = 1
   SelectorSize (l G.:*: r) = SelectorSize l + SelectorSize r
 
-type If :: forall k. Bool -> k -> k -> k
-type family If c t e where
-  If 'True t _ = t
-  If 'False _ e = e
+type FailIf :: Bool -> ErrorMessage -> Constraint
+type family FailIf cond errorMsg where
+  FailIf 'True errorMsg = () ~ TypeError errorMsg
+  FailIf _ _ = ()

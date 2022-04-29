@@ -37,6 +37,7 @@ source-repository head
 library
     exposed-modules:
         Deriving.On
+        Deriving.On.Class
         Deriving.On.Nth
     hs-source-dirs: src
     default-language: Haskell98
